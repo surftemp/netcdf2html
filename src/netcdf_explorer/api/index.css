@@ -1,9 +1,5 @@
-body {
-    font-size: 24px;
-}
-
-#slider_div {
-
+body * {
+    font-size: 20px;
 }
 
 .control_container {
@@ -23,20 +19,17 @@ body {
   z-index: 10;
   background-color: #2196F3;
   color: #fff;
+  display: flex;
+}
+
+.close_button {
+    margin-left:auto;
+    margin-right: 0px;
 }
 
 .scene_label {
     margin-left: 20px;
 }
-
-/*
-img {
-    border: 1px solid black;
-    padding: 3px;
-    margin: 3px;
-}
-*/
-
 
 fieldset {
     border-radius: 5px;

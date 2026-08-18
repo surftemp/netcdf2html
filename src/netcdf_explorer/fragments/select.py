@@ -1,4 +1,4 @@
-#    Copyright (C) 2023  National Centre for Earth Observation (NCEO)
+#    Copyright (C) 2023  University of Reading (NCEO)
 #
 #    This program is free software: you can redistribute it and/or modify
 #    it under the terms of the GNU General Public License as published by

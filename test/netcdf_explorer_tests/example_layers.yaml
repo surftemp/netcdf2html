@@ -21,13 +21,7 @@ image:
   max-zoom": 10
 
 info:
-  Date: "${str(data[\"time\"].data)[0:10]}"
-
-labels:
-  # labels specify one or more groups of categories
-  # the label name and categories can match a variable in the data, if so the labels will be loaded from the variable
-  # the category values in each group are defined here...
-  cloudy: [ "very", "somewhat", "a little", "none" ]
+  Date: "${str(data[\"time\"].data)[0:19]}"
 
 derive_bands:
   CLOUD_MASK: "not (QA_PIXEL & 8 == 0)"
@@ -37,7 +31,6 @@ timeseries:
   ST_cloudy:
     masks: ["CLOUD_MASK","EXTENDED_CLOUD_MASK"]
     variables: ["ST"]
-
 
 # specify the layers
 layers:
@@ -83,9 +76,16 @@ layers:
   REF:
     label: "Reflectance"
     type: "rgb"
-    red_band: "B4"     # variable to use to provide red intensity
-    green_band: "B3"   # variable to use to provide green intensity
-    blue_band: "B2"    # variable to use to provide blue intensity
+    red_band: "B4"      # variable to use to provide red intensity
+    green_band: "B3"    # variable to use to provide green intensity
+    blue_band: "B2"     # variable to use to provide blue intensity
+    red_gamma: 0.5      # gamma correction - boost reds (smaller values increase boost)
+    green_gamma: 0.5    # gamma correction - boost greens (smaller values increase boost)
+    blue_gamma: 0.5     # gamma correction - boost blues (smaller values increase boost)
+    min_value: 0.0      # apply linear normalisation with this minimum value
+    max_value: 0.5      # apply linear normalisation with this maximum value
+    low_percentile: 2   # apply linear normalisation with the minimum value computed from this percentile
+    high_percentile: 98 # apply linear normalisation with the maximum value computed from this percentile
 
   OSM:
     label: "Open Street Map"
@@ -95,12 +95,4 @@ layers:
       # not that the URL should specify the correct CRS for the projection used in the variable's x and y coordinates
     url: "https://eocis.org/mapproxy/service?service=WMS&request=GetMap&layers=osm&styles=&format=image%2Fpng&transparent=false&version=1.1.1&width={WIDTH}&height={HEIGHT}&srs=EPSG%3A27700&bbox={XMIN},{YMIN},{XMAX},{YMAX}"
 
-# histograms are displayed in the grid view
-histograms:
-  ST_distribution:
-    label: "Surface Temperature" # meaningful description of the layer, used in the html output
-    band: "ST"   # the variable to plot in the histogram
-    threshold: 280  # optional, specify a threshold to divide the histogram into two colour zones.  This can be a number or the name of a variable organised by the case dimension that will provide a per-case threshold
-    min_value: 270  # optional, calculate from applying math.floor to the minimum of each case's data values if not specified
-    max_value: 330  # optional, calculate from applying math.ceil to the maximum of each case's data if not specified
-    bin_width: 1    # optional, set to 1 if not specified
+

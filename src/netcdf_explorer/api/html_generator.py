@@ -1,6 +1,6 @@
 # MIT License
 #
-# Copyright (c) 2023-2024 National Centre for Earth Observation
+# Copyright (c) 2023-2024 University of Reading
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -33,11 +33,10 @@ import numpy as np
 from mako.template import Template
 import pyproj
 import logging
-import copy
 
-from .histogram import Histogram
+from .colours import ColoursToRGB
 
-from .layers import LayerFactory, LayerSingleBand, LayerWMS
+from .layers import LayerFactory, LayerSingleBand, LayerWMS, LayerDiscrete
 from .expr_parser import ExpressionParser
 
 from netcdf_explorer.htmlfive.html5_builder import Html5Builder, ElementFragment
@@ -122,7 +121,8 @@ class HTMLGenerator:
         self.filter_controls = filter_controls
         self.info = config.get("info",{})
         self.crs = config.get("crs",None)
-        self.labels = config.get("labels",None)
+        self.min_timestamp = self.max_timestamp = None # datetime in "YYYY-MM-DDTHH:MM:SS" format
+
         self.logger = logging.getLogger("generate_html")
         self.timeseries = config.get("timeseries",{})
         self.derive_bands = config.get("derive_bands",{})
@@ -191,7 +191,6 @@ class HTMLGenerator:
         self.layer_legends = {}
 
         self.timeseries_definitions = []
-        self.histogram_definitions = []
 
         if self.x_coordinate:
             self.input_ds = self.reduce_coordinate_dimension(self.input_ds, self.x_coordinate, self.case_dimension)
@@ -202,17 +201,6 @@ class HTMLGenerator:
             for (layer_name, layer_spec) in config["layers"].items():
                 layer = LayerFactory.create(self, layer_name, layer_spec)
                 self.layer_definitions.append(layer)
-
-        if "histograms" in config:
-            for(histogram_name, histogram_spec) in config["histograms"].items():
-                histogram = Histogram(histogram_name,
-                                      label=histogram_spec.get("label",histogram_name),
-                                      band=histogram_spec["band"],
-                                      threshold=histogram_spec.get("threshold",None),
-                                      min_value=histogram_spec.get("min_value",None),
-                                      max_value=histogram_spec.get("max_value",None),
-                                      bin_width=histogram_spec.get("bin_width",None))
-                self.histogram_definitions.append(histogram)
 
         if "timeseries" in config:
             for (timeseries_name, timeseries_spec) in config["timeseries"].items():
@@ -348,7 +336,7 @@ class HTMLGenerator:
             if case_dimension in dims:
                 raise Exception(f"Unable to make spatial coordinate {coordinate_name} 1-dimensional")
 
-            # coordinate is 2 dimensional, see if it can be reduced to 1 dimensional
+            # coordinate is 2-dimensional, see if it can be reduced to 1-dimensional
             da = ds[coordinate_name]
             arr = da.data
             if np.alltrue(arr[0, :] == arr[-1, :]):
@@ -403,37 +391,6 @@ class HTMLGenerator:
         else:
             raise Exception("Unable to determine image dimensions from dataset")
 
-    def generate_label_buttons(self):
-        d = ElementFragment("div")
-        d.add_fragment(ElementFragment("a",attrs={"href":"", "download":"labels.json","id":"download_labels_btn"}).add_text("download"))
-        return d
-
-    def get_label_control_id(self, for_group, for_label, for_index=None):
-        # obtain the expected id for a label control
-        if for_index is not None:
-            return f"radio_{for_group}_{for_label}_{for_index}"
-        else:
-            return f"radio_{for_group}_{for_label}"
-
-    def generate_label_controls(self, index=None):
-        d = ElementFragment("div")
-        for label_group in self.labels:
-            fieldset = ElementFragment("fieldset", style={"width":str(self.grid_image_width)+"px"})
-            legend = ElementFragment("legend").add_text(label_group)
-            fieldset.add_fragment(legend)
-            group = "label_group_" + label_group
-            if index is not None:
-                group += "_" + str(index)
-
-            for label in self.labels[label_group]:
-                control_id = self.get_label_control_id(label_group,label,index)
-                i = ElementFragment("input",attrs={"type":"radio","name":group,"value":label,"id":control_id})
-                l = ElementFragment("label",attrs={"for":control_id}).add_text(label)
-                i.add_fragment(l)
-                fieldset.add_fragment(i)
-            d.add_fragment(fieldset)
-        return d
-
     def generate_info_table(self, index, ds):
         d = self.generate_info_dict(index, ds)
         tf = TableFragment(attrs={"class":"info_table"},style={"width":"%dpx"%self.grid_image_width})
@@ -463,7 +420,6 @@ class HTMLGenerator:
         cases = []
         image_width = None
         image_height = None
-        label_values = None
 
         if self.layer_definitions:
             image_width, image_height = self.get_image_dimensions(self.input_ds)
@@ -473,7 +429,14 @@ class HTMLGenerator:
             p = Progress("Reading data")
             for i in range(n):
                 p.report("", i/n)
-                timestamp = str(self.input_ds[self.time_coordinate].data[i])[:10] if self.time_coordinate else None
+                # timestamp will be formatted YYYY-MM-DDT:HH:MM:SS
+                timestamp = str(self.input_ds[self.time_coordinate].data[i])[:19] if self.time_coordinate else None
+                if timestamp:
+                    if self.min_timestamp is None or timestamp < self.max_timestamp:
+                        self.min_timestamp = timestamp
+                    if self.max_timestamp is None or timestamp > self.max_timestamp:
+                        self.max_timestamp = timestamp
+
                 cases.append((i, timestamp, self.input_ds.isel(**{self.case_dimension: i})))
                 if self.time_coordinate:
                     cases = sorted(cases, key=lambda t: t[1])
@@ -497,13 +460,6 @@ class HTMLGenerator:
                     layer_definition.build_legend(legend_path)
                     self.layer_legends[layer_definition.layer_name] = legend_src
 
-            # build the images and data
-            label_values = None
-            if self.labels:
-                label_values = { "case_dimension": self.case_dimension, "values": {}, "schema": copy.deepcopy(self.labels)}
-                if self.netcdf_download_filename:
-                    label_values["netcdf_filename"] = self.netcdf_download_filename
-
             p = Progress("Building images")
 
             static_image_srcs = {}
@@ -522,7 +478,6 @@ class HTMLGenerator:
             for (index, timestamp, ds) in cases:
                 p.report("",index/n)
                 image_srcs = {}
-                histogram_srcs = {}
                 data_srcs = {}
 
                 for layer_definition in self.flatten_layers(self.layer_definitions):
@@ -538,21 +493,6 @@ class HTMLGenerator:
                         image_srcs[layer_definition.layer_name] = static_image_srcs[layer_definition.layer_name]
                         if layer_definition.save_data():
                             data_srcs[layer_definition.layer_name] = static_data_srcs[layer_definition.layer_name]
-
-                for histogram_definition in self.histogram_definitions:
-                    (src, path) = self.get_image_path(histogram_definition.layer_name, index=index)
-                    histogram_definition.build(ds, path)
-                    image_srcs[histogram_definition.layer_name] = src
-
-                if self.labels:
-                    for label_group in self.labels:
-                        if label_group not in label_values["values"]:
-                            label_values["values"][label_group] = []
-                        if label_group in ds:
-                            label_values["values"][label_group].append(ds[label_group].item())
-                        else:
-                            label_values["values"][label_group].append(None)
-
 
                 self.layer_images.append((index, timestamp, image_srcs, data_srcs, ds))
 
@@ -602,19 +542,22 @@ class HTMLGenerator:
 
             self.build_timeseries_view(timeseries_container_div, builder)
 
+        scenes = {"layers": [], "index": [], "layer_groups": {}}
+
         if self.terrain_view:
             terrain_container_div = container_div.add_element("div", {"id": "terrain_container", "style":"display:none;"})
             self.build_terrain_view(terrain_container_div, builder)
-
-        scenes = { "layers":[], "index": [], "layer_groups":{} }
-
-        if self.terrain_view:
             scenes["terrain_view"] = self.terrain_view
 
         for layer_definition in self.flatten_layers(self.layer_definitions):
             layer_dict = {"name": layer_definition.layer_name, "label": layer_definition.layer_label, "has_data": layer_definition.save_data()}
             if isinstance(layer_definition,LayerWMS):
                 layer_dict["wms_url"] = layer_definition.wms_url
+            if isinstance(layer_definition,LayerDiscrete):
+                layer_dict["classes"] = {}
+                for (k,v) in layer_definition.values.items():
+                    (label,colour) = v
+                    layer_dict["classes"][k] = { "label": label, "colour": ColoursToRGB.to_hex(ColoursToRGB.lookup(colour)) }
             scenes["layers"].insert(0, layer_dict)
 
         for layer_definition in self.flatten_layers(self.layer_definitions):
@@ -668,10 +611,6 @@ class HTMLGenerator:
         with open(self.output_html_path, "w") as f:
             f.write(builder.get_html())
 
-        if label_values:
-            with open(os.path.join(self.output_folder, "labels.json"),"w") as f:
-                f.write(json.dumps(label_values, indent=4))
-
         os.makedirs(os.path.join(self.output_folder, "service_info"), exist_ok=True)
         with open(os.path.join(self.output_folder, "service_info", "services.json"), "w") as f:
             f.write(json.dumps({}, indent=4))
@@ -685,11 +624,24 @@ class HTMLGenerator:
 
         grid_container_div.add_element("span").add_text(self.title)
 
+        if self.min_timestamp is not None and self.max_timestamp is not None:
+            grid_container_div.add_element("span", {"class": "spacer"}).add_text("|")
+            grid_container_div.add_element("input",
+                {"type":"date", "id":"grid_select_date","min":self.min_timestamp[:10],"max":self.max_timestamp[:10]})
+
         if self.netcdf_download_filename:
             grid_container_div.add_element("span", {"class": "spacer"}).add_text("|")
             grid_container_div.add_element("a", {"href": self.netcdf_download_filename,
                                                  "download": self.netcdf_download_filename}).add_text(
                 "download netcdf4")
+
+        grid_container_div.add_element("span", {"class": "spacer"}).add_text("|")
+        grid_container_div.add_element("button", {"id": "prev_page_btn"}).add_text("Previous page")
+        grid_container_div.add_element("input", {"type": "range", "id": "page_index"})
+        grid_container_div.add_element("button", {"id": "next_page_btn"}).add_text("Next Page")
+        grid_container_div.add_element("span", {"id": "page_label"}).add_text("1/1")
+        grid_container_div.add_element("input", {"id":"page_size", "type": "number", "value":"2", "min":"1", "step":"1"}).add_text("Page Size")
+
 
         tf = TableFragment()
 
@@ -698,10 +650,6 @@ class HTMLGenerator:
 
         if self.info:
             column_ids += ["info"]
-            columns_hidden += [False]
-
-        if self.labels:
-            column_ids += ["labels"]
             columns_hidden += [False]
 
         groups = set()
@@ -722,8 +670,7 @@ class HTMLGenerator:
         header_cells = ["Index"]
         if self.info:
             header_cells.append("Info")
-        if self.labels:
-            header_cells.append("Labels")
+
         for layer_definition in self.flatten_layers(self.layer_definitions,only_grid_view=True)[::-1]:
             label = layer_definition.layer_label
             group = layer_definition.get_group()
@@ -750,23 +697,11 @@ class HTMLGenerator:
                 header_div.add_fragment(sf)
             header_cells.append(header_div)
 
-        for histogram in self.histogram_definitions:
-            header_div = ElementFragment("div")
-            label_fragment = ElementFragment("span").add_text(histogram.label)
-            header_div.add_fragment(label_fragment)
-            if histogram.threshold is not None:
-                header_div.add_fragment(ElementFragment("br"))
-                threshold_fragment = ElementFragment("span").add_text(f"threshold={histogram.threshold}")
-                header_div.add_fragment(threshold_fragment)
-            header_cells.append(header_div)
-
         tf.add_header_row(header_cells)
 
         button_cells = [""]
         if self.info:
             button_cells.append("")
-        if self.labels:
-            button_cells.append(self.generate_label_buttons())
 
         for layer_definition in self.flatten_layers(self.layer_definitions, only_grid_view=True)[::-1]:
             button_cells.append(
@@ -780,8 +715,7 @@ class HTMLGenerator:
             cells = [self.generate_index_cell(row)]
             if self.info:
                 cells += [self.generate_info_table(index,ds)]
-            if self.labels:
-                cells += [self.generate_label_controls(index)]
+
             for layer_definition in self.flatten_layers(self.layer_definitions,only_grid_view=True)[::-1]:
                 src = layer_sources[layer_definition.layer_name]
                 width = self.grid_image_width if self.grid_image_width else image_width
@@ -793,12 +727,8 @@ class HTMLGenerator:
                 div = ElementFragment("div",{"style":f"width:{width}px;height:{height}px;"})
                 div.add_fragment(img)
                 cells.append(div)
-            for histogram_definition in self.histogram_definitions:
-                src = layer_sources[histogram_definition.layer_name]
-                img = ImageFragment("", histogram_definition.layer_name + "_grid_" + str(index), alt_text=timestamp,
-                                    w=self.grid_image_width if self.grid_image_width else image_width, load_url=src)
-                cells.append(img)
-            tf.add_row(cells)
+
+            tf.add_row(cells, {"id":f"row{row}"}, {"display":"none"})
             row += 1
 
         grid_container_div.add_fragment(tf)
@@ -829,6 +759,10 @@ class HTMLGenerator:
         overlay_container_div.add_element("input", {"type": "range", "id": "time_index"})
         overlay_container_div.add_element("button", {"id": "next_btn"}).add_text("Next")
         overlay_container_div.add_element("span", {"id": "scene_label"}).add_text("?")
+        if self.min_timestamp is not None and self.max_timestamp is not None:
+            overlay_container_div.add_element("span", {"class": "spacer"}).add_text("|")
+            overlay_container_div.add_element("input",
+                {"type":"date", "id":"overlay_select_date","min":self.min_timestamp[:10],"max":self.max_timestamp[:10]})
 
         overlay_container_div.add_element("span", {"class": "spacer"}).add_text("|")
 
@@ -836,39 +770,28 @@ class HTMLGenerator:
             overlay_container_div.add_element("button", {"id": "terrain_view_btn"}).add_text("Terrain View")
             overlay_container_div.add_element("span", {"class": "spacer"}).add_text("|")
 
-        overlay_container_div.add_element("input",
-                                          {"type": "checkbox", "id": "show_layers", "checked": "checked"}).add_text(
-            "Show Layers")
+        overlay_container_div.add_element("input", {"type": "button", "id": "show_layers", "value": "Layer Controls"})
 
         overlay_container_div.add_element("span", {"class": "spacer"}).add_text("|")
 
         if self.filter_controls:
-            overlay_container_div.add_element("input",
-                {"type": "checkbox", "id": "show_filters", "checked": "checked"}).add_text("Show Filters")
+            overlay_container_div.add_element("input", {"type": "button", "id": "show_filters", "value":"Filter Controls"})
 
         if self.info:
-            overlay_container_div.add_element("input",
-                                               {"type": "checkbox", "id": "show_info",
-                                                "checked": "checked"}).add_text("Show Info")
-        if self.labels:
-            overlay_container_div.add_element("input",
-                                              {"type": "checkbox", "id": "show_labels",
-                                               "checked": "checked"}).add_text("Show Labels")
+            overlay_container_div.add_element("input", {"type": "button", "id": "show_info", "value":"Show Info"})
 
         if has_data:
-            overlay_container_div.add_element("input",
-                                              {"type": "checkbox", "id": "show_data",
-                                               "checked": "checked"}).add_text("Show Data")
+            overlay_container_div.add_element("input", {"type": "button", "id": "show_data", "value": "Show Data"})
 
         controls_div = overlay_container_div.add_element("div", {"id": "layer_container", "class": "control_container"})
         controls_div.add_element("div", {"id": "layer_container_header", "class": "control_container_header"}).add_text(
-            "Layers")
+            "Layers").add_element("input",{"type":"button","id":"close_layer_btn","value":"X","class":"close_button"})
 
         slider_fieldset = controls_div.add_element("fieldset", style={"display": "inline"})
         slider_fieldset.add_element("legend").add_text("Layers")
         slider_container = slider_fieldset.add_element("div", {"id": "legend_controls"})
-        slider_table = slider_container.add_element("table", {"id": "slider_controls"})
         slider_container.add_element("input", {"type": "button", "id": "close_all_sliders", "value": "Hide All Layers"})
+        slider_table = slider_container.add_element("table", {"id": "slider_controls"})
 
         groups = set()
         for layer_definition in self.flatten_layers(self.layer_definitions, only_overlay_view=True):
@@ -923,10 +846,14 @@ class HTMLGenerator:
                             option_attrs["selected"] = "selected"
                         cmap_selector.add_element("option",option_attrs).add_text(cmap)
 
+            elif isinstance(layer_definition,LayerDiscrete):
+                col4.add_element("div", {"id":layer_definition.layer_name+"_classes"})
+
+
         if self.filter_controls:
             filter_div = overlay_container_div.add_element("div", {"id": "filter_container", "class": "control_container"})
             filter_div.add_element("div", {"id": "filter_container_header", "class": "control_container_header"}).add_text(
-                "Scene Filters")
+                "Scene Filters").add_element("input",{"type":"button","id":"close_filter_btn","value":"X","class":"close_button"})
 
             filter_fieldset = filter_div.add_element("fieldset", style={"display": "inline"})
             filter_fieldset.add_element("legend").add_text("Filters")
@@ -943,25 +870,16 @@ class HTMLGenerator:
                                                            {"id": "info_container", "class": "control_container"})
             info_div.add_element("div",
                                    {"id": "info_container_header", "class": "control_container_header"}).add_text(
-                "Scene Info")
+                "Scene Info").add_element("input",{"type":"button","id":"close_info_btn","value":"X","class":"close_button"})
 
             info_div.add_element("div", attrs={"id":"info_content"})
-
-        if self.labels:
-            labels_div = overlay_container_div.add_element("div",
-                                                           {"id": "labels_container", "class": "control_container"})
-            labels_div.add_element("div",
-                                   {"id": "labels_container_header", "class": "control_container_header"}).add_text(
-                "Labels")
-
-            labels_div.add_fragment(self.generate_label_controls(None))
 
         if has_data:
             data_div = overlay_container_div.add_element("div",
                                                            {"id": "data_container", "class": "control_container"})
             data_div.add_element("div",
                                    {"id": "data_container_header", "class": "control_container_header"}).add_text(
-                "Data")
+                "Data").add_element("input",{"type":"button","id":"close_data_btn","value":"X", "class":"close_button"})
             data_div.add_element("div", attrs={"id":"data_content"})
 
         self.layer_definitions.reverse()

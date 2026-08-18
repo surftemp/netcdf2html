@@ -1,6 +1,6 @@
 # MIT License
 #
-# Copyright (c) 2023-2024 National Centre for Earth Observation
+# Copyright (c) 2023-2024 University of Reading
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -22,9 +22,6 @@
 
 import argparse
 import os
-import json
-import shutil
-
 import xarray as xr
 import numpy as np
 import logging
@@ -55,8 +52,6 @@ def main():
     parser.add_argument("--output-folder", help="folder to write html output", default="html_output")
     parser.add_argument("--config-path", help="JSON or YAML file specifying one or more layer specifications",
                         default="layers.json", required=True)
-    parser.add_argument("--install-server-script", action="store_true",
-                        help="Install a serve_html.py script")
     parser.add_argument("--sample-count", type=int, default=None,
                         help="randomly sample this many cases for display"),
     parser.add_argument("--sample-cases", nargs="+", type=int, default=None,
@@ -70,10 +65,8 @@ def main():
     with open(args.config_path) as f:
         if args.config_path.endswith(".yml") or args.config_path.endswith(".yaml"):
             config = yaml.load(f, Loader=yaml.FullLoader)
-        elif args.config_path.endswith(".json"):
-            config = json.loads(f.read())
         else:
-            print("Error - config file should be json (.json) or yaml (.yml or .yaml) format")
+            print("Error - config file should be yaml (.yml or .yaml) format")
             sys.exit(-1)
         dimensions = config.get("dimensions", {})
         case_dimension = dimensions.get("case", None)
@@ -99,11 +92,6 @@ def main():
                                  download_from=download_filepath,
                                  filter_controls=args.filter_controls, index_list=index_list)
     g.run()
-
-    if args.install_server_script:
-        src_path = os.path.join(os.path.split(__file__)[0], "serve_html.py")
-        dst_path = os.path.join(args.output_folder, "serve_html.py")
-        shutil.copyfile(src_path,dst_path)
 
 
 if __name__ == '__main__':

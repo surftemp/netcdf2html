@@ -1,6 +1,6 @@
 # MIT License
 #
-# Copyright (c) 2023-2024 National Centre for Earth Observation
+# Copyright (c) 2023-2024 University of Reading
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -42,14 +42,26 @@ def save_image(arr,vmin,vmax,path,cmap_name="coolwarm"):
     im = Image.fromarray(np.uint8((255*cmap_fn((arr-vmin)/(vmax-vmin)))))
     im.save(path)
 
-def save_image_falsecolour(data_red, data_green, data_blue, path, red_gamma=0.5, green_gamma=0.5, blue_gamma=0.5):
+def save_image_falsecolour(data_red, data_green, data_blue, path, min_value=None, max_value=None, low_percentile=None, high_percentile=None, red_gamma=0.5, green_gamma=0.5, blue_gamma=0.5):
     alist = []
+
+    combined = np.concatenate((data_red,data_green,data_blue))
+    low_val = 0
+    high_val = 1
+    if min_value is not None or max_value is not None:
+        if min_value is not None:
+            low_val = min_value
+        if max_value is not None:
+            high_val = max_value
+    elif low_percentile is not None or high_percentile is not None:
+        if low_percentile is None:
+            low_percentile = 0
+        if high_percentile is None:
+            high_percentile = 100
+        low_val, high_val = np.nanpercentile(combined, [low_percentile, high_percentile])
     for (arr,gamma) in [(data_red,red_gamma),(data_green,green_gamma),(data_blue,blue_gamma)]:
-        # normalise reflectances to range 0 to 1
-        minv = np.nanmin(arr)
-        maxv = np.nanmax(arr)
-        v = (arr - minv) / (maxv - minv)
-        # apply gamma correction
+        v = np.clip(arr, low_val, high_val)
+        v = (v - low_val) / (high_val - low_val)
         v = np.where(np.isnan(v), np.nan, np.power(np.where(np.isnan(v),0,v), gamma))
         # convert to pixel values
         v = v * 255
@@ -74,11 +86,15 @@ def save_image_discrete(arr,path,values):
     lookup = {}
     for (k,v) in values.items():
         (label,colour) = v
-        k = int(k)
+        if not isinstance(k,str):
+            k = int(k)
         lookup[k] = ColoursToRGB.lookup(colour)+[255]
 
     def get_rgba(value):
-        key = int(value) if not math.isnan(value) else -1
+        if isinstance(value,str):
+            key = value
+        else:
+            key = int(value) if not math.isnan(value) else -1
         if key not in lookup:
             return np.array([0,0,0,255])
         else:
@@ -248,7 +264,7 @@ class LayerBase:
 class LayerRGB(LayerBase):
 
     def __init__(self, layer, converter, layer_name, layer_label, selectors, red_variable, green_variable, blue_variable,
-                 red_gamma=0.5, green_gamma=0.5, blue_gamma=0.5):
+                 red_gamma=0.5, green_gamma=0.5, blue_gamma=0.5, min_value=None, max_value=None, low_percentile=None, high_percentile=None):
         super().__init__(layer, converter, layer_name, layer_label, selectors)
         self.red_variable = red_variable
         self.green_variable = green_variable
@@ -256,6 +272,10 @@ class LayerRGB(LayerBase):
         self.red_gamma = red_gamma
         self.green_gamma = green_gamma
         self.blue_gamma = blue_gamma
+        self.min_value = min_value
+        self.max_value = max_value
+        self.low_percentile = low_percentile
+        self.high_percentile = high_percentile
 
     def has_legend(self):
         return False
@@ -275,7 +295,9 @@ class LayerRGB(LayerBase):
         green = self.get_data(ds[self.green_variable])
         blue = self.get_data(ds[self.blue_variable])
         save_image_falsecolour(red, green, blue, path, red_gamma=self.red_gamma,
-                               green_gamma=self.green_gamma, blue_gamma=self.blue_gamma)
+                               green_gamma=self.green_gamma, blue_gamma=self.blue_gamma,
+                               min_value=self.min_value, max_value=self.max_value,
+                               low_percentile=self.low_percentile, high_percentile=self.high_percentile)
 
 
 class LayerSingleBand(LayerBase):
@@ -455,7 +477,7 @@ class LayerMask(LayerBase):
     def build(self,ds,path):
         save_image_mask(self.get_data(ds[self.band_name].astype(int)), path, self.r, self.g, self.b)
 
-class ImageLayerDiscrete(LayerBase):
+class LayerDiscrete(LayerBase):
 
     def __init__(self, layer, converter, layer_name, layer_label, selectors, band_name, values):
         super().__init__(layer, converter, layer_name, layer_label, selectors)
@@ -481,6 +503,21 @@ class ImageLayerDiscrete(LayerBase):
 
     def has_legend(self):
         return False
+
+class LayerStaticImage(LayerBase):
+
+    def __init__(self, layer, converter, layer_name, layer_label, selectors, image_path):
+        super().__init__(layer, converter, layer_name, layer_label, selectors)
+        self.image_path = image_path
+
+    def has_legend(self):
+        return False
+
+    def check(self, ds):
+        return None
+
+    def build(self,ds,path):
+        shutil.copyfile(self.image_path, path)
 
 class LayerFactory:
 
@@ -533,12 +570,19 @@ class LayerFactory:
             red_gamma = layer.get("red_gamma",0.5)
             green_gamma = layer.get("green_gamma",0.5)
             blue_gamma = layer.get("blue_gamma",0.5)
+            min_value = layer.get("min_value")
+            max_value = layer.get("max_value")
+            low_percentile = layer.get("low_percentile")
+            high_percentile = layer.get("high_percentile")
             created_layer = LayerRGB(layer, converter, layer_name, layer_label, selectors, red_variable=red_band,
-                    green_variable=green_band, blue_variable=blue_band, red_gamma=red_gamma, green_gamma=green_gamma, blue_gamma=blue_gamma)
+                    green_variable=green_band, blue_variable=blue_band,
+                    red_gamma=red_gamma, green_gamma=green_gamma, blue_gamma=blue_gamma,
+                    min_value=min_value, max_value=max_value,
+                    low_percentile=low_percentile, high_percentile=high_percentile)
         elif layer_type == "discrete":
             layer_band = layer.get("band", layer_name)
             values = layer["values"]
-            created_layer = ImageLayerDiscrete(layer, converter, layer_name, layer_label, selectors, layer_band, values)
+            created_layer = LayerDiscrete(layer, converter, layer_name, layer_label, selectors, layer_band, values)
         elif layer_type == "wms":
             url = layer["url"]
             scale = layer.get("scale", 1)
@@ -549,6 +593,9 @@ class LayerFactory:
             thickness = layer.get("thickness", 3)
             colour = layer.get("colour",[0,0,0,255])
             created_layer = LayerVector(layer, converter, layer_name, layer_label, selectors, layer_band, scale=scale, thickness=thickness,colour=colour)
+        elif layer_type == "static_image":
+            image_path = layer.get("image_path")
+            created_layer = LayerStaticImage(layer, converter, layer_name, layer_label, selectors, image_path)
         else:
             raise Exception(f"Unknown layer type {layer_type}")
         if not in_layer_group:

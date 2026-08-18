@@ -62,7 +62,7 @@ class HtmlView {
         this.current_index = 0;
         this.layer_opacities = {};
         this.months_excluded = {};
-        this.labels = null;
+
         this.di = null; // the dataimage used in the overlay view
 
         this.base_url = window.location.origin + window.location.pathname;
@@ -83,8 +83,20 @@ class HtmlView {
         this.filter_container = document.getElementById("filter_container");
         this.scene_label_elt = document.getElementById("scene_label");
 
-        this.show_labels = document.getElementById("show_labels");
-        this.labels_container = document.getElementById("labels_container");
+        this.grid_select_date = document.getElementById("grid_select_date");
+        this.overlay_select_date = document.getElementById("overlay_select_date");
+
+        /* page related controls (grid view) */
+
+        this.prev_page_btn = document.getElementById("prev_page_btn");
+        this.next_page_btn = document.getElementById("next_page_btn");
+        this.page_range = document.getElementById("page_index");
+        this.page_size_control = document.getElementById("page_size");
+
+        this.page_label = document.getElementById("page_label");
+
+        this.current_page = 0;
+        this.max_page = 0;
 
         this.show_data = document.getElementById("show_data");
         this.data_container = document.getElementById("data_container");
@@ -106,14 +118,6 @@ class HtmlView {
         this.exit_terrain_view_button = document.getElementById("exit_terrain_view");
         this.terrain_zoom = document.getElementById("terrain_zoom");
         this.terrain_zoom_value = document.getElementById("terrain_zoom_value");
-
-        this.grid_label_controls = {}; // label_group => [label_value => label_control]
-        this.overlay_label_controls = {}; // label_group => label_value => label_control
-
-        this.download_labels_btn = document.getElementById("download_labels_btn"); // optional, may be undefined
-
-        // record which services are available from the server (by default, none)
-        this.services = {};
 
         // record custom min/max/cmaps selected in overlay view for data layers only
         this.data_layers = {};
@@ -178,8 +182,143 @@ class HtmlView {
         this.image_url_cache = {};
         this.cached_image_ids = [];
         this.image_url_cache_size = 500;
+    }
 
-        this.overlay_updating = false;
+    /**
+     * Provide a standard string representation of dates
+     *
+     * @param {Date} dt a javascript date
+     *
+     * @returns {string} in format YYYY-MM-DD
+     */
+    date_to_string(dt) {
+        // return YYY-MM-DD formatted string from Date
+        let day = dt.getUTCDate();
+        let month = dt.getUTCMonth() + 1;
+        let year = dt.getFullYear();
+        let s = String(year) + "-" + String(month).padStart(2, '0') + "-" + String(day).padStart(2, '0');
+        return s;
+    }
+
+    /**
+     * Parse a string
+     *
+     * @param s a string in format YYYY-MM-DD
+     *
+     * @returns {Date} a javascript Date object parsed from the string
+     */
+    string_to_date(s) {
+        // parse YYYY-MM-DD formatted string to Date
+        let day = Number.parseInt(s.slice(8, 10));
+        let month = Number.parseInt(s.slice(5, 7));
+        let year = Number.parseInt(s.slice(0, 4));
+        return new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+    }
+
+    select_grid_date(updated_date) {
+        let min_diff = null;
+        let min_index = null;
+        let updated_dt = this.string_to_date(updated_date);
+        for (let idx = 0; idx < this.scenes.index.length; idx++) {
+            let item = this.scenes.index[idx];
+            let item_dt = this.string_to_date(item.timestamp);
+            let diff = Math.abs(item_dt - updated_dt);
+            if (min_diff === null || diff < min_diff) {
+                min_diff = diff;
+                min_index = idx;
+            }
+        }
+        if (min_index !== null) {
+            this.select_grid_index(min_index);
+        }
+    }
+
+    select_grid_index(new_index) {
+        let pos = this.scenes.index[new_index].pos;
+        let row_id = `row${pos}`;
+        let previous_current_page = this.current_page;
+        this.current_page = 0;
+        while(new_index >= (this.current_page + this.page_size)) {
+            this.current_page += 1;
+        }
+        if (this.current_page !== previous_current_page) {
+            this.show_page();
+        }
+        let row_elt = document.getElementById(row_id);
+        if (row_elt) {
+            row_elt.scrollIntoView();
+        }
+    }
+
+    select_overlay_date(updated_date) {
+        let min_diff = null;
+        let min_index = null;
+        let updated_dt = this.string_to_date(updated_date);
+        for (let idx = 0; idx < this.index.length; idx++) {
+            let item = this.index[idx];
+            let item_dt = this.string_to_date(item.timestamp);
+            let diff = Math.abs(item_dt - updated_dt);
+            if (min_diff === null || diff < min_diff) {
+                min_diff = diff;
+                min_index = item.pos;
+            }
+        }
+        if (min_index !== null) {
+            this.current_index = min_index;
+            this.update_time_range();
+            this.show().then(() => {});
+        }
+    }
+
+    prev_page() {
+        if (this.current_page > 0) {
+            this.current_page -= 1;
+            this.show_page();
+        }
+    }
+
+    next_page() {
+        if (this.current_page < this.max_page) {
+            this.current_page += 1;
+            this.show_page();
+        }
+    }
+
+    show_page() {
+        let page_start = this.current_page * this.page_size;
+        let page_end = ((this.current_page+1) * this.page_size)-1;
+        for(let idx=0; idx < this.scenes.index.length; idx++) {
+            let row = document.getElementById(`row${idx}`);
+            if (idx >= page_start && idx <= page_end) {
+                row.style.display = 'table-row';
+            } else {
+                row.style.display = 'none';
+            }
+        }
+        this.page_label.innerText = `(${this.current_page+1}/${this.max_page+1})`;
+        this.update_page_range();
+    }
+
+    update_page_size() {
+        this.page_size = Number.parseInt(this.page_size_control.value);
+        this.calculate_max_page();
+    }
+
+    update_page_range() {
+        if (this.max_page == 0) {
+            this.page_range.value = "50";
+        } else {
+            this.page_range.value = String(100 * (this.current_page / this.max_page));
+        }
+    }
+
+    calculate_max_page() {
+        let nr_scenes = this.scenes.index.length;
+        this.max_page = Math.ceil(nr_scenes/this.page_size)-1;
+        if (this.current_page > this.max_page) {
+            this.current_page = this.max_page;
+            this.show_page();
+        }
     }
 
     cache_image(image_id, image_url) {
@@ -245,7 +384,7 @@ class HtmlView {
     }
 
     async load() {
-        // load data files: scenes.json and (optionally) labels.json
+        // load data files: scenes.json a
         // this needs to be called before init
         let r = await fetch("scenes.json");
         this.scenes = await r.json();
@@ -264,15 +403,6 @@ class HtmlView {
             this.handle_map_mouseover(null, null);
         }
 
-        if (this.download_labels_btn) {
-            try {
-                r = await fetch("labels.json");
-                this.labels = await r.json();
-            } catch (e) {
-                console.log("No labels could be loaded")
-            }
-        }
-
         // initially, include all scenes in the index
         this.index = [];
         for (let idx = 0; idx < this.scenes.index.length; idx++) {
@@ -280,46 +410,12 @@ class HtmlView {
             this.index.push(this.scenes.index[idx]);
         }
 
-        // test to see what services are available (if any)
-        try {
-            r = await fetch("service_info/services.json");
-            this.services = await r.json();
-        } catch (e) {
-
+        // set the grid date picker to the date of the first scene
+        if (this.scenes.index.length > 0 && this.grid_select_date) {
+            this.grid_select_date.value = this.scenes.index[0].timestamp.slice(0,10);
         }
-    }
 
-    get_label_control_id(label_group, label_value, index) {
-        // obtain the expected id for a label control
-        let control_id = "radio_" + label_group + "_" + label_value;
-        if (index !== null) {
-            control_id += "_" + index;
-        }
-        return control_id;
-    }
-
-    create_overlay_label_control_callback(label_group, label) {
-        // create a callback to be called when a label is updated by an overlay label control
-        return async () => {
-            if (this.index.length == 0) {
-                return; // all scenes filtered out, perhaps
-            }
-            let index = this.index[this.current_index].pos;
-            this.labels.values[label_group][index] = label;
-            this.grid_label_controls[label_group][index][label].checked = true;
-            await this.notify_label_update(label_group, index, label);
-        }
-    }
-
-    create_grid_label_control_callback(label_group, label, i) {
-        // create a callback to be called when a label is updated by a grid label control
-        return async () => {
-            this.labels.values[label_group][i] = label;
-            if (i === this.current_index) {
-                this.overlay_label_controls[label_group][label].checked = true;
-            }
-            await this.notify_label_update(label_group, i, label);
-        }
+        this.calculate_max_page();
     }
 
     create_custom_cmap_callback(layer_name, select_control, min_control, max_control) {
@@ -335,13 +431,6 @@ class HtmlView {
         select_control.addEventListener("change", cb);
         min_control.addEventListener("input", cb);
         max_control.addEventListener("input", cb);
-    }
-
-    async notify_label_update(label_group, i, label) {
-        // notify the server (if this service is supported) of the label update
-        if ("labels" in this.services) {
-            await fetch("/label/" + label_group + "/" + i + "/" + label, {"method": "POST"});
-        }
     }
 
     create_open_callback(index) {
@@ -372,14 +461,12 @@ class HtmlView {
         if (this.grid_view_button) {
             this.grid_view_button.addEventListener("click", (evt) => {
                 this.show_container(this.grid_container);
-                history.pushState({}, null, this.base_url);
             });
         }
 
         if (this.grid_view_button2) {
             this.grid_view_button2.addEventListener("click", (evt) => {
                 this.show_container(this.grid_container);
-                history.pushState({}, null, this.base_url);
             });
         }
 
@@ -391,7 +478,6 @@ class HtmlView {
 
         if (this.timeseries_view_button) {
             this.timeseries_view_button.addEventListener("click", async (evt) => {
-                history.pushState({}, null, this.base_url);
                 this.show_container(null);
                 if (this.timeseries_container) {
                     this.timeseries_container.style.display = "block";
@@ -455,52 +541,26 @@ class HtmlView {
         });
 
         if (this.layer_container && this.show_layers) {
-            this.show_layers.addEventListener("input", (evt) => {
-                let s = "none";
-                if (evt.target.checked) {
-                    s = "block";
-                }
-                this.layer_container.style.display = s;
+            this.show_layers.addEventListener("click", (evt) => {
+                this.layer_container.style.display = "block";
             });
         }
 
         if (this.filter_container && this.show_filters) {
-            this.show_filters.addEventListener("input", (evt) => {
-                let s = "none";
-                if (evt.target.checked) {
-                    s = "block";
-                }
-                this.filter_container.style.display = s;
+            this.show_filters.addEventListener("click", (evt) => {
+                this.filter_container.style.display = "block";
             });
         }
 
         if (this.info_container && this.show_info) {
-            this.show_info.addEventListener("input", (evt) => {
-                let s = "none";
-                if (evt.target.checked) {
-                    s = "block";
-                }
-                this.info_container.style.display = s;
-            });
-        }
-
-        if (this.labels_container && this.show_labels) {
-            this.show_labels.addEventListener("input", (evt) => {
-                let s = "none";
-                if (evt.target.checked) {
-                    s = "block";
-                }
-                this.labels_container.style.display = s;
+            this.show_info.addEventListener("click", (evt) => {
+                this.info_container.style.display = "block";
             });
         }
 
         if (this.data_container && this.show_data) {
-            this.show_data.addEventListener("input", (evt) => {
-                let s = "none";
-                if (evt.target.checked) {
-                    s = "block";
-                }
-                this.data_container.style.display = s;
+            this.show_data.addEventListener("click", (evt) => {
+                this.data_container.style.display = "block";
             });
         }
 
@@ -571,74 +631,10 @@ class HtmlView {
             }
         });
 
-        if (this.download_labels_btn) {
-            this.download_labels_btn.addEventListener("click", evt => {
-                var uri = "data:text/plain;base64," + btoa(JSON.stringify(this.labels));
-                this.download_labels_btn.setAttribute("href", uri);
-            });
-        }
-
         for (let i = 0; i < this.scenes.index.length; i++) {
             let open_btn_id = "open_" + i + "_btn";
             let btn = document.getElementById(open_btn_id);
             btn.addEventListener("click", this.create_open_callback(i));
-        }
-
-        if (this.labels) {
-            // get the label controls, and clear them
-            for (let label_group in this.labels.schema) {
-                this.overlay_label_controls[label_group] = {};
-                for (let label_idx in this.labels.schema[label_group]) {
-                    let label_value = this.labels.schema[label_group][label_idx];
-                    let control_id = this.get_label_control_id(label_group, label_value, null);
-                    let control = document.getElementById(control_id);
-                    control.checked = false;
-                    this.overlay_label_controls[label_group][label_value] = control;
-                }
-
-                this.grid_label_controls[label_group] = [];
-                for (let i = 0; i < this.labels.values[label_group].length; i++) {
-                    let label_controls = {};
-                    for (let label_idx in this.labels.schema[label_group]) {
-                        let label_value = this.labels.schema[label_group][label_idx];
-                        let control = document.getElementById(this.get_label_control_id(label_group, label_value, i));
-                        control.checked = false;
-                        label_controls[label_value] = control;
-                    }
-                    this.grid_label_controls[label_group].push(label_controls);
-                }
-            }
-
-            // set the values on the controls
-            for (let label_group in this.labels.values) {
-                let values = this.labels.values[label_group];
-
-                for (let i = 0; i < values.length; i++) {
-                    let value = values[i];
-                    if (value) {
-                        this.grid_label_controls[label_group][i][value].checked = true;
-
-                        if (i === this.current_index) {
-                            this.overlay_label_controls[label_group][value].checked = true;
-                        }
-                    }
-                }
-            }
-
-            // bind the label controls
-            for (let label_group in this.overlay_label_controls) {
-                for (let label in this.overlay_label_controls[label_group]) {
-                    this.overlay_label_controls[label_group][label].addEventListener("click",
-                        this.create_overlay_label_control_callback(label_group, label));
-                }
-                let grid_controls = this.grid_label_controls[label_group];
-                for (let i = 0; i < grid_controls.length; i++) {
-                    let controls = grid_controls[i];
-                    for (let label in controls) {
-                        controls[label].addEventListener("click", this.create_grid_label_control_callback(label_group, label, i));
-                    }
-                }
-            }
         }
 
         for (let layer_idx in this.scenes.layers) {
@@ -681,6 +677,7 @@ class HtmlView {
                 this.show_container(this.overlay_container);
             } else {
                 this.show_container(this.grid_container);
+                this.show_page();
             }
         } else if (this.timeseries_container) {
             // otherwise open the timeseries container
@@ -690,6 +687,41 @@ class HtmlView {
         if (this.time_range) {
             this.update_time_range();
         }
+
+        if (this.grid_select_date) {
+            this.grid_select_date.addEventListener("input", (evt) => {
+               this.select_grid_date(this.grid_select_date.value);
+            });
+        }
+        if (this.overlay_select_date) {
+            this.overlay_select_date.addEventListener("input", (evt) => {
+               this.select_overlay_date(this.overlay_select_date.value);
+            });
+        }
+
+        this.prev_page_btn.addEventListener("click", (ev) => {
+            this.prev_page();
+        });
+
+        this.next_page_btn.addEventListener("click", (ev) => {
+            this.next_page();
+        });
+
+        this.page_size_control.addEventListener("input", (evt) => {
+            this.update_page_size();
+            this.show_page();
+        });
+
+        this.page_range.addEventListener("input", (evt) => {
+             if (this.max_page > 0) {
+                 let frac = Number.parseFloat(this.page_range.value) / 100;
+                 this.current_page = Math.round(frac * this.max_page);
+                 this.show_page();
+             }
+        });
+
+        this.update_page_size();
+        this.show_page();
 
         await this.show();
     }
@@ -719,7 +751,6 @@ class HtmlView {
             for (let idx=0; idx<grouped_layers.length; idx+=1) {
                 let grouped_layer_name = grouped_layers[idx];
                 let group_select_row_id = layer_name + "_group_select_row";
-                let target_group_select_id = grouped_layer_name + "_group_select_row";
                 let overlay_row_id = grouped_layer_name + "_overlay_row";
                 if (grouped_layer_name === layer_name) {
                     document.getElementById(overlay_row_id).style.display = "table-row";
@@ -769,8 +800,6 @@ class HtmlView {
         // update the time range slider to reflect the current index
         if (this.index.length) {
             this.time_range.value = String(100 * (this.current_index / (this.index.length - 1)));
-            let original_index = this.index[this.current_index].original_index;
-            history.pushState({}, null, this.base_url+"?index="+original_index);
         } else {
             this.time_range.value = "50";
         }
@@ -884,7 +913,6 @@ class HtmlView {
 
     async show() {
 
-        this.overlay_updating = true;
         if (this.time_range) {
             this.time_range.disabled = true;
         }
@@ -942,30 +970,16 @@ class HtmlView {
             this.populate_info(this.info_content, info);
         }
 
-        if (this.labels) {
-            let pos = this.index[this.current_index].pos;
-            for (let label_group in this.labels.values) {
-                let label = this.labels.values[label_group][pos];
-                if (label) {
-                    this.overlay_label_controls[label_group][label].checked = true;
-                } else {
-                    // if there is no label value, uncheck all the controls
-                    for (let label_value in this.overlay_label_controls[label_group]) {
-                        this.overlay_label_controls[label_group][label_value].checked = false;
-                    }
-                }
-            }
-        }
-
         if (this.scene_label_elt) {
             let overlay_label = "0/0";
             if (this.index.length) {
-                overlay_label = "(" + (this.current_index + 1) + "/" + this.index.length + ") " + this.index[this.current_index].timestamp;
+                overlay_label = "(" + (this.current_index + 1) + "/" + this.index.length + ") ";
+            }
+            if (this.overlay_select_date) {
+                 this.overlay_select_date.value = this.index[this.current_index].timestamp.slice(0,10);
             }
             this.scene_label_elt.innerHTML = overlay_label;
         }
-
-        this.overlay_updating = false;
 
         this.time_range.disabled = false;
         this.next_button.disabled = false;
@@ -1079,21 +1093,35 @@ window.addEventListener("load", async (ect) => {
     let layer_container = document.getElementById("layer_container");
     if (layer_container) {
         hv.setup_drag(layer_container, document.getElementById("layer_container_header"), 400, 400);
+        document.getElementById("close_layer_btn").addEventListener("click", (evt) => {
+           layer_container.style.display = "none";
+        });
     }
+
     let filter_container = document.getElementById("filter_container");
     if (filter_container) {
         hv.setup_drag(filter_container, document.getElementById("filter_container_header"), 100, 400);
+        document.getElementById("close_filter_btn").addEventListener("click", (evt) => {
+           filter_container.style.display = "none";
+        });
+        filter_container.style.display = "none";
     }
+
     let info_container = document.getElementById("info_container");
     if (info_container) {
         hv.setup_drag(info_container, document.getElementById("info_container_header"), 200, 400);
+        document.getElementById("close_info_btn").addEventListener("click", (evt) => {
+           info_container.style.display = "none";
+        });
+        info_container.style.display = "none";
     }
-    let labels_container = document.getElementById("labels_container");
-    if (labels_container) {
-        hv.setup_drag(labels_container, document.getElementById("labels_container_header"), 300, 400);
-    }
+
     let data_container = document.getElementById("data_container");
     if (data_container) {
         hv.setup_drag(data_container, document.getElementById("data_container_header"), 400, 400);
+        document.getElementById("close_data_btn").addEventListener("click", (evt) => {
+           data_container.style.display = "none";
+        });
+        data_container.style.display = "none";
     }
 });

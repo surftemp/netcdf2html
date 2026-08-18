@@ -2,7 +2,7 @@
 
 # MIT License
 #
-# Copyright (C) 2023-2024 National Centre For Earth Observation (NCEO)
+# Copyright (C) 2023-2024 University of Reading
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy of this software
 # and associated documentation files (the "Software"), to deal in the Software without
@@ -35,7 +35,7 @@ colours_to_rgb = {
     "gold": { "r": 255, "g": 215, "b": 0 },
     "brown": { "r": 165, "g": 42, "b": 42 },
     "lightgreen": { "r": 144, "g": 238, "b": 144 },
-    "green": { "r": 0, "g": 128, "b": 0 },
+    "green": { "r": 0, "g": 255, "b": 0 },
     "darkgreen": { "r": 0, "g": 100, "b": 0 },
     "cyan": { "r": 0, "g": 255, "b": 255 },
     "lightblue": { "r": 173, "g": 216, "b": 230 },
@@ -64,3 +64,10 @@ class ColoursToRGB:
             b = int(colour[5:7], 16)
             return [r,g,b]
         return None
+
+    @staticmethod
+    def to_hex(rgb_array):
+        r = rgb_array[0]
+        g = rgb_array[1]
+        b = rgb_array[2]
+        return f"#{r:02X}{g:02X}{b:02X}"

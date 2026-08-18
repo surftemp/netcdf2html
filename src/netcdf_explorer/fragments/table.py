@@ -1,4 +1,4 @@
-#    Copyright (C) 2023  National Centre for Earth Observation (NCEO)
+#    Copyright (C) 2023  University of Reading (NCEO)
 #
 #    This program is free software: you can redistribute it and/or modify
 #    it under the terms of the GNU General Public License as published by
@@ -29,8 +29,8 @@ class TableFragment(ElementFragment):
                 style["visibility"] = "collapse"
             self.add_element("col",attrs={"id":column_ids[idx]}, style=style)
 
-    def add_row(self, cells):
-        tr = self.tbody.add_element("tr")
+    def add_row(self, cells, tr_attrs={}, style={}):
+        tr = self.tbody.add_element("tr", tr_attrs, style)
         if isinstance(cells,str):
             tr.add_element("td",attrs={"colspan":"100%"}).add_text(cells)
         else:

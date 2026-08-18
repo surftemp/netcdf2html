@@ -1,6 +1,6 @@
 # MIT License
 #
-# Copyright (c) 2023-2024 National Centre for Earth Observation
+# Copyright (c) 2023-2024 University of Reading
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
