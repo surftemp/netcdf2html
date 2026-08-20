@@ -238,7 +238,7 @@ class HtmlView {
         let row_id = `row${pos}`;
         let previous_current_page = this.current_page;
         this.current_page = 0;
-        while(new_index >= (this.current_page + this.page_size)) {
+        while(new_index >= (this.current_page*this.page_size + this.page_size)) {
             this.current_page += 1;
         }
         if (this.current_page !== previous_current_page) {
@@ -693,6 +693,7 @@ class HtmlView {
                this.select_grid_date(this.grid_select_date.value);
             });
         }
+
         if (this.overlay_select_date) {
             this.overlay_select_date.addEventListener("input", (evt) => {
                this.select_overlay_date(this.overlay_select_date.value);

@@ -640,7 +640,7 @@ class HTMLGenerator:
         grid_container_div.add_element("input", {"type": "range", "id": "page_index"})
         grid_container_div.add_element("button", {"id": "next_page_btn"}).add_text("Next Page")
         grid_container_div.add_element("span", {"id": "page_label"}).add_text("1/1")
-        grid_container_div.add_element("input", {"id":"page_size", "type": "number", "value":"2", "min":"1", "step":"1"}).add_text("Page Size")
+        grid_container_div.add_element("input", {"id":"page_size", "type": "number", "value":"10", "min":"1", "step":"1"}).add_text("Page Size")
 
 
         tf = TableFragment()
