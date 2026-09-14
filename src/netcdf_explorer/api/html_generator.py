@@ -611,10 +611,6 @@ class HTMLGenerator:
         with open(self.output_html_path, "w") as f:
             f.write(builder.get_html())
 
-        os.makedirs(os.path.join(self.output_folder, "service_info"), exist_ok=True)
-        with open(os.path.join(self.output_folder, "service_info", "services.json"), "w") as f:
-            f.write(json.dumps({}, indent=4))
-
     def build_grid_view(self, grid_container_div, builder, image_width, image_height, display_timeseries=False):
         grid_container_div.add_element("input",
                                        {"type": "button", "id": "overlay_view_btn", "value": "Show Overlay View"})
